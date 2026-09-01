@@ -1,0 +1,7 @@
+streamlit
+pandas
+pdf2image
+python-dotenv
+huggingface_hub
+pydantic
+schwifty

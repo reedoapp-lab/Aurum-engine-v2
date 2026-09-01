@@ -1,0 +1,6 @@
+{
+  "name": "Aurum Engine",
+  "description": "Sovereign Operating System for Capital Call Auditing, Private Capital Governance, and DATEV General Ledger verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
