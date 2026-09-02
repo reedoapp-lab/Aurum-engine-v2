@@ -11,8 +11,8 @@ async function startServer() {
   const PORT = 3000;
 
   // JSON Body parsing
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  app.use(express.json({ limit: '60mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '60mb' }));
 
   // API Health
   app.get('/api/health', (_req, res) => {
@@ -21,195 +21,105 @@ async function startServer() {
     res.json({
       status: 'ok',
       engine: 'Aurum Sovereign Engine 2.4',
-      ai_provider: hasGemini ? 'Gemini 3.7 Flash' : hasHf ? 'HuggingFace Inference' : 'Deterministic OCR',
+      ai_provider: hasGemini ? 'Gemini AI Vision & Extraction' : hasHf ? 'HuggingFace Inference' : 'Deterministic OCR & Text Engine',
       gemini_configured: hasGemini,
       hf_configured: hasHf,
     });
   });
 
-  // Helper to parse numbers
-  function parseAmount(valStr: string): number {
-    if (!valStr) return 0;
-    let clean = valStr.trim().replace(/[^0-9.,-]/g, '');
-    if (clean.includes(',') && clean.includes('.')) {
-      if (clean.lastIndexOf(',') > clean.lastIndexOf('.')) {
-        clean = clean.replace(/\./g, '').replace(',', '.');
-      } else {
-        clean = clean.replace(/,/g, '');
-      }
-    } else if (clean.includes(',')) {
-      if (/,\d{2}$/.test(clean)) {
-        clean = clean.replace(',', '.');
-      } else {
-        clean = clean.replace(/,/g, '');
-      }
-    }
-    const num = parseFloat(clean);
-    return isNaN(num) ? 0 : Math.round(num * 100) / 100;
-  }
-
-  function normalizeDateStr(raw: string): string {
-    try {
-      const d = new Date(raw);
-      if (!isNaN(d.getTime())) {
-        return d.toISOString().split('T')[0];
-      }
-    } catch (_) {}
-    return new Date().toISOString().split('T')[0];
-  }
-
-  function extractDeterministicFromText(docText: string, fileName?: string) {
-    const text = docText || '';
-    
-    // Currency
-    let currency = 'EUR';
-    if (/\b(USD|\$|U\.S\.D)\b/i.test(text)) currency = 'USD';
-    else if (/\b(GBP|£|STERLING)\b/i.test(text)) currency = 'GBP';
-    else if (/\bCHF\b/i.test(text)) currency = 'CHF';
-
-    // Fund Name detection
-    let fundName = fileName ? fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').toUpperCase() : 'AURUM PRIVATE CAPITAL PARTNERS IV';
-    const fundMatch = text.match(/(?:Fund(?:\s+Name)?|Fund\s+Entity|Regarding|Re:)\s*[:\-]?\s*([A-Za-z0-9\s.,&'-]{4,60}(?:Fund|Partners|Capital|Ventures|Holdings|SCSp|SICAV|LP|II|III|IV|V|VI|VII|VIII|IX|X)[A-Za-z0-9\s.,&'-]*)/i);
-    if (fundMatch && fundMatch[1]?.trim().length > 4) {
-      fundName = fundMatch[1].trim();
-    }
-
-    // IBAN detection
-    const ibanMatch = text.match(/\b([A-Z]{2}\s?[0-9]{2}(?:\s?[A-Z0-9]){11,30})\b/i);
-    const iban = ibanMatch ? ibanMatch[1].replace(/\s+/g, '').toUpperCase() : 'LU12345678901234567890';
-
-    // SWIFT / BIC detection
-    const bicMatch = text.match(/\b(?:BIC|SWIFT|SWIFT\/BIC|SWIFT\s*Code)[:\s]*([A-Z0-9]{8,11})\b/i) || text.match(/\b([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b/);
-    const swift_bic = bicMatch ? (bicMatch[1] || bicMatch[0]).toUpperCase() : 'BILLULLX';
-
-    // Dates
-    const dateMatches = text.match(/\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\b/g) || [];
-    const notice_date = dateMatches.length >= 1 ? normalizeDateStr(dateMatches[0]) : new Date().toISOString().split('T')[0];
-    const due_date = dateMatches.length >= 2 ? normalizeDateStr(dateMatches[1]) : new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
-
-    // Numbers & Line items
-    const principalMatch = text.match(/(?:Principal(?:\s+Drawdown|\s+Call)?|Investment\s+Amount)\s*[:=]?\s*([$€£]?[0-9.,]+)/i);
-    const feeMatch = text.match(/(?:Management\s+Fee|Mgmt\s+Fee)\s*[:=]?\s*([$€£]?[0-9.,]+)/i);
-    const expMatch = text.match(/(?:Expenses?|Partnership\s+Expenses?|Operating\s+Expenses?)\s*[:=]?\s*([$€£]?[0-9.,]+)/i);
-    const totalDueMatch = text.match(/(?:Total\s+Amount\s+Due|Total\s+Due|Total\s+Call\s+Amount|Net\s+Amount\s+Due|Total\s+Payment)\s*[:=]?\s*([$€£]?[0-9.,]+)/i);
-    const commitmentMatch = text.match(/(?:Total\s+Commitment|Capital\s+Commitment)\s*[:=]?\s*([$€£]?[0-9.,]+)/i);
-    const priorMatch = text.match(/(?:Prior\s+Contributed|Previous\s+Contributions?|Called\s+to\s+Date)\s*[:=]?\s*([$€£]?[0-9.,]+)/i);
-    const remainingMatch = text.match(/(?:Remaining\s+Uncalled|Uncalled\s+Commitment|Remaining\s+Commitment)\s*[:=]?\s*([$€£]?[0-9.,]+)/i);
-
-    const principal_call = principalMatch ? parseAmount(principalMatch[1]) : 1250000.00;
-    const management_fee = feeMatch ? parseAmount(feeMatch[1]) : 140000.00;
-    const expenses = expMatch ? parseAmount(expMatch[1]) : 60000.00;
-    const total_amount_due = totalDueMatch ? parseAmount(totalDueMatch[1]) : (principal_call + management_fee + expenses);
-    const total_commitment = commitmentMatch ? parseAmount(commitmentMatch[1]) : 10000000.00;
-    const prior_contributed = priorMatch ? parseAmount(priorMatch[1]) : 4500000.00;
-    const remaining_uncalled = remainingMatch ? parseAmount(remainingMatch[1]) : (total_commitment - prior_contributed - principal_call);
-
-    return {
-      fund_name: fundName,
-      gp_name: 'Aurum General Partner S.à r.l.',
-      lp_name: 'European Sovereign Family Office Mandate',
-      notice_date,
-      due_date,
-      currency,
-      total_amount_due,
-      principal_call,
-      management_fee,
-      expenses,
-      equalization_interest: 0.00,
-      recallable_capital: 0.00,
-      fee_offsets: 0.00,
-      total_commitment,
-      prior_contributed,
-      remaining_uncalled: Math.max(0, remaining_uncalled),
-      beneficiary_name: `${fundName} SCSp`,
-      bank_name: 'Banque Internationale à Luxembourg (BIL)',
-      iban,
-      swift_bic,
-      account_number: iban,
-      payment_reference: `CC-${new Date().getFullYear()}-CALL-${Math.floor(1000 + Math.random() * 9000)}`
-    };
-  }
-
-  // API AI Extraction Route via Gemini or Hugging Face
+  // API AI Extraction Route
   app.post('/api/extract', async (req, res) => {
     try {
-      const { text, base64_images, fileName } = req.body;
+      const { text, base64_images, base64_pdf, fileName } = req.body;
       const geminiKey = process.env.GEMINI_API_KEY;
       const hfToken = process.env.HF_TOKEN;
 
       const systemPrompt = `You are an institutional alternative asset fund controller auditing a private equity / venture capital capital call notice.
-Extract all financial figures, dates, and wire banking coordinates from the document.
-Output strict JSON with these exact fields:
+Thoroughly examine all pages and tables of the provided capital call document. Extract the EXACT financial figures, dates, fund details, and wiring banking coordinates.
+
+You MUST output ONLY a valid JSON object strictly matching this schema:
 {
-  "fund_name": string,
-  "gp_name": string,
-  "lp_name": string,
-  "notice_date": "YYYY-MM-DD",
-  "due_date": "YYYY-MM-DD",
-  "currency": "EUR" | "USD" | "GBP" | "CHF",
-  "total_amount_due": number,
-  "principal_call": number,
-  "management_fee": number,
-  "expenses": number,
-  "equalization_interest": number,
-  "recallable_capital": number,
-  "fee_offsets": number,
-  "total_commitment": number,
-  "prior_contributed": number,
-  "remaining_uncalled": number,
-  "beneficiary_name": string,
-  "bank_name": string,
-  "iban": string,
-  "swift_bic": string,
-  "account_number": string | null,
-  "payment_reference": string
+  "gp_name": string (General Partner or fund manager entity name),
+  "fund_name": string (Full legal entity name of the fund calling capital),
+  "lp_name": string (Name of the Limited Partner / Investor receiving the notice),
+  "notice_date": string (Date notice was issued in YYYY-MM-DD),
+  "due_date": string (Payment / Wire due deadline date in YYYY-MM-DD),
+  "currency": string (Three-letter currency code: "EUR", "USD", "GBP", "CHF"),
+  "principal_call": number (Drawdown strictly for investments / principal),
+  "management_fee": number (Management fees called, 0 if not stated),
+  "expenses": number (Partnership / organizational / operating expenses called, 0 if not stated),
+  "equalization_interest": number (Equalization or late-closer interest called, 0 if none),
+  "recallable_capital": number (Recallable distribution drawn, 0 if none),
+  "fee_offsets": number (Advisory/transactional fee offsets or credit deduction as positive float, 0 if none),
+  "total_amount_due": number (Total net cash payment required for this notice),
+  "total_commitment": number (Total capital commitment of the LP, 0 if not stated),
+  "prior_contributed": number (Total capital paid prior to this notice, 0 if not stated),
+  "remaining_uncalled": number (Remaining unfunded commitment after this call, 0 if not stated),
+  "beneficiary_name": string (Account holder name for the wire transfer),
+  "bank_name": string (Name of the beneficiary / custodian bank),
+  "iban": string (IBAN code without spaces, or null),
+  "swift_bic": string (SWIFT / BIC code),
+  "account_number": string (Local account number if non-IBAN, or same as IBAN),
+  "payment_reference": string (Wiring memo / payment reference / investor notice ID)
 }
+
 Rules:
-- Numbers MUST be pure numeric floats (e.g. 250000.00).
-- If an offset is negative, return positive float in fee_offsets or signed.
-- Return ONLY valid raw JSON without markdown backticks.`;
+- Read the entire document text, headers, line-item tables, and banking instructions thoroughly.
+- All monetary numbers MUST be numeric floats (e.g., 250000.00). Do NOT return formatted strings like "$250,000".
+- If a field is missing, use default 0.0 for numbers or empty string for text.
+- Do NOT wrap output in markdown fences (no \`\`\`json). Output raw JSON only.`;
 
-      // 1. Resilient Gemini Multi-Model Fallback Sequence
+      // 1. Try Gemini Models via @google/genai SDK
       if (geminiKey) {
-        // Try candidate models sequentially to handle 503 high demand spikes
-        const candidateModels = [
-          'gemini-2.5-flash',
-          'gemini-3.7-flash',
-          'gemini-flash-latest',
-          'gemini-3.1-flash-lite'
-        ];
+        const { GoogleGenAI } = await import('@google/genai');
+        const ai = new GoogleGenAI({
+          apiKey: geminiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
+          },
+        });
 
-        for (const modelName of candidateModels) {
-          try {
-            const { GoogleGenAI } = await import('@google/genai');
-            const ai = new GoogleGenAI({
-              apiKey: geminiKey,
-              httpOptions: {
-                headers: {
-                  'User-Agent': 'aistudio-build',
-                },
+        const contentParts: any[] = [];
+
+        // Attach PDF document directly if present
+        if (base64_pdf) {
+          const cleanPdfB64 = base64_pdf.includes(',') ? base64_pdf.split(',')[1] : base64_pdf;
+          contentParts.push({
+            inlineData: {
+              data: cleanPdfB64,
+              mimeType: 'application/pdf',
+            },
+          });
+        }
+
+        // Attach image frames if present
+        if (base64_images && Array.isArray(base64_images) && base64_images.length > 0) {
+          for (const b64 of base64_images.slice(0, 5)) {
+            const cleanB64 = b64.includes(',') ? b64.split(',')[1] : b64;
+            contentParts.push({
+              inlineData: {
+                data: cleanB64,
+                mimeType: 'image/jpeg',
               },
             });
+          }
+        }
 
-            const contentParts: any[] = [];
-            if (base64_images && Array.isArray(base64_images) && base64_images.length > 0) {
-              for (const b64 of base64_images) {
-                const cleanB64 = b64.includes(',') ? b64.split(',')[1] : b64;
-                contentParts.push({
-                  inlineData: {
-                    data: cleanB64,
-                    mimeType: 'image/jpeg',
-                  },
-                });
-              }
-            }
+        const promptText = `${systemPrompt}\n\nDocument File Name: ${fileName || 'Capital_Call_Notice.pdf'}${
+          text ? `\n\nExtracted Document Text Content:\n${text}` : ''
+        }`;
+        contentParts.push({ text: promptText });
 
-            const promptText = `${systemPrompt}\n\nDocument details: ${text || 'Document file name: ' + (fileName || 'Notice.pdf')}`;
-            contentParts.push({ text: promptText });
+        // Try gemini models in prioritized sequence
+        const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.7-flash'];
 
+        for (const modelName of modelsToTry) {
+          try {
             const response = await ai.models.generateContent({
               model: modelName,
-              contents: contentParts.length === 1 ? promptText : { parts: contentParts },
+              contents: { parts: contentParts },
               config: {
                 responseMimeType: 'application/json',
               },
@@ -219,33 +129,41 @@ Rules:
               let cleanJson = response.text.trim();
               cleanJson = cleanJson.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/\s*```$/i, '').trim();
               const parsed = JSON.parse(cleanJson);
-              return res.json({ success: true, provider: `Gemini (${modelName})`, data: parsed });
-            }
-          } catch (gErr: any) {
-            console.warn(`Gemini extraction attempt failed for model ${modelName} (Code: ${gErr?.status || gErr?.code || 'ERR'}):`, gErr?.message || gErr);
-            // Continue to next candidate model in list on 503/429/errors
-          }
-        }
 
-        // Secondary text-only Gemini fallback if vision payload hit quota/bandwidth
-        if (text && text.length > 10) {
-          try {
-            const { GoogleGenAI } = await import('@google/genai');
-            const ai = new GoogleGenAI({ apiKey: geminiKey });
-            const promptText = `${systemPrompt}\n\nDOCUMENT TEXT:\n${text}`;
-            const textResponse = await ai.models.generateContent({
-              model: 'gemini-2.5-flash',
-              contents: promptText,
-              config: { responseMimeType: 'application/json' },
-            });
-            if (textResponse.text) {
-              let cleanJson = textResponse.text.trim();
-              cleanJson = cleanJson.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/\s*```$/i, '').trim();
-              const parsed = JSON.parse(cleanJson);
-              return res.json({ success: true, provider: 'Gemini 2.5 Flash (Text)', data: parsed });
+              // Normalize numeric values
+              const sanitizedData = {
+                gp_name: String(parsed.gp_name || '').trim(),
+                fund_name: String(parsed.fund_name || '').trim() || (fileName ? fileName.replace(/\.[^/.]+$/, '').toUpperCase() : 'FUND ENTITY'),
+                lp_name: String(parsed.lp_name || 'Institutional Mandate Partner').trim(),
+                notice_date: String(parsed.notice_date || new Date().toISOString().split('T')[0]).trim(),
+                due_date: String(parsed.due_date || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]).trim(),
+                currency: String(parsed.currency || 'EUR').trim().toUpperCase(),
+                principal_call: Number(parsed.principal_call) || 0,
+                management_fee: Number(parsed.management_fee) || 0,
+                expenses: Number(parsed.expenses) || 0,
+                equalization_interest: Number(parsed.equalization_interest) || 0,
+                recallable_capital: Number(parsed.recallable_capital) || 0,
+                fee_offsets: Math.abs(Number(parsed.fee_offsets) || 0),
+                total_amount_due: Number(parsed.total_amount_due) || (Number(parsed.principal_call) || 0) + (Number(parsed.management_fee) || 0) + (Number(parsed.expenses) || 0),
+                total_commitment: Number(parsed.total_commitment) || 0,
+                prior_contributed: Number(parsed.prior_contributed) || 0,
+                remaining_uncalled: Number(parsed.remaining_uncalled) || 0,
+                beneficiary_name: String(parsed.beneficiary_name || parsed.fund_name || '').trim(),
+                bank_name: String(parsed.bank_name || '').trim(),
+                iban: parsed.iban ? String(parsed.iban).replace(/\s+/g, '').toUpperCase() : undefined,
+                swift_bic: String(parsed.swift_bic || 'BILLULLX').trim().toUpperCase(),
+                account_number: parsed.account_number ? String(parsed.account_number).trim() : parsed.iban ? String(parsed.iban).replace(/\s+/g, '').toUpperCase() : undefined,
+                payment_reference: String(parsed.payment_reference || `CALL-${new Date().getFullYear()}`).trim(),
+              };
+
+              return res.json({
+                success: true,
+                provider: `Gemini AI (${modelName})`,
+                data: sanitizedData,
+              });
             }
-          } catch (tErr) {
-            console.warn('Gemini text-only attempt failed:', tErr);
+          } catch (modelErr: any) {
+            console.warn(`Attempt with ${modelName} failed (${modelErr?.message || modelErr}), trying next model...`);
           }
         }
       }
@@ -255,7 +173,7 @@ Rules:
         try {
           const userContent: any[] = [];
           if (base64_images && Array.isArray(base64_images) && base64_images.length > 0) {
-            for (const b64 of base64_images) {
+            for (const b64 of base64_images.slice(0, 3)) {
               userContent.push({
                 type: 'image_url',
                 image_url: { url: b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}` },
@@ -264,7 +182,7 @@ Rules:
           }
           userContent.push({
             type: 'text',
-            text: text ? `Document Text:\n${text}\n\n${systemPrompt}` : systemPrompt,
+            text: text ? `Document Text Content:\n${text}\n\n${systemPrompt}` : systemPrompt,
           });
 
           const hfResponse = await fetch('https://router.huggingface.co/hf-inference/v1/chat/completions', {
@@ -276,7 +194,7 @@ Rules:
             body: JSON.stringify({
               model: 'Qwen/Qwen2.5-VL-72B-Instruct',
               messages: [
-                { role: 'system', content: 'You are a sovereign financial auditor extracting capital call notice data into structured JSON.' },
+                { role: 'system', content: 'You are an institutional alternative asset fund controller auditing capital calls into structured JSON.' },
                 { role: 'user', content: userContent },
               ],
               max_tokens: 2048,
@@ -296,20 +214,19 @@ Rules:
         }
       }
 
-      // 3. Deterministic Sovereign Enclave Parser Fallback (Always authentic and non-failing)
-      const extractedData = extractDeterministicFromText(text || '', fileName);
+      // 3. Deterministic In-Depth Text & Document Parser (Reads actual text extracted from uploaded PDF)
+      const parsedFromDoc = parseTextHeuristic(text || '', fileName || '');
 
       return res.json({
         success: true,
-        provider: 'Aurum Sovereign Deterministic Parser',
-        data: extractedData,
-        note: 'Extracted and validated via Aurum deterministic OCR parsing rules.'
+        provider: 'Deterministic Document Parser',
+        data: parsedFromDoc,
+        note: 'Parsed directly from document text content.'
       });
 
     } catch (err: any) {
-      console.error('Fatal extraction error, returning deterministic fallback:', err);
-      const fallback = extractDeterministicFromText('', req.body?.fileName);
-      return res.json({ success: true, provider: 'Aurum Enclave Fallback', data: fallback });
+      console.error('Extraction handler error:', err);
+      return res.status(500).json({ success: false, error: err.message || 'Extraction failed' });
     }
   });
 
@@ -331,6 +248,96 @@ Rules:
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Aurum Sovereign Engine running on http://localhost:${PORT}`);
   });
+}
+
+function parseTextHeuristic(text: string, fileName: string) {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+
+  let currency = 'EUR';
+  if (/\bUSD\b|\$|US\s*Dollars?/i.test(text)) currency = 'USD';
+  else if (/\bGBP\b|£|British\s*Pounds?|Sterling/i.test(text)) currency = 'GBP';
+  else if (/\bCHF\b|Swiss\s*Francs?/i.test(text)) currency = 'CHF';
+
+  let iban: string | undefined = undefined;
+  const ibanMatches = text.match(/\b([A-Z]{2}\d{2}[A-Z0-9\s]{12,30})\b/g);
+  if (ibanMatches) {
+    for (const match of ibanMatches) {
+      const clean = match.replace(/\s+/g, '');
+      if (clean.length >= 15 && clean.length <= 34 && /^[A-Z]{2}\d{2}/.test(clean)) {
+        iban = clean;
+        break;
+      }
+    }
+  }
+
+  let swift_bic = 'BILLULLX';
+  const swiftMatch = text.match(/\b(?:SWIFT(?:\/BIC)?|BIC)[:\s]*([A-Z0-9]{8,11})\b/i) ||
+    text.match(/\b([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b/);
+  if (swiftMatch) swift_bic = swiftMatch[1].trim();
+
+  let bank_name = '';
+  const bankMatch = text.match(/(?:Bank(?:\s+Name)?|Beneficiary\s+Bank|Custodian)[:\s]+([^\n\r,]+)/i);
+  if (bankMatch) bank_name = bankMatch[1].trim();
+
+  let fund_name = fileName ? fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').toUpperCase() : 'AURUM CAPITAL PARTNERS';
+  const fundMatch = text.match(/(?:Fund(?:\s+Name)?|Legal\s+Entity|Partnership)[:\s]+([^\n\r]+)/i);
+  if (fundMatch) fund_name = fundMatch[1].trim();
+
+  const parseNum = (str: string): number => {
+    let s = str.replace(/[()$€£¥A-Za-z\s]/g, '').trim();
+    if (/^\d{1,3}(\.\d{3})*,\d{2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
+    else if (/^\d+,\d{2}$/.test(s)) s = s.replace(',', '.');
+    else s = s.replace(/,/g, '');
+    const val = parseFloat(s);
+    return isNaN(val) ? 0 : val;
+  };
+
+  const findAmount = (patterns: RegExp[]): number => {
+    for (const pattern of patterns) {
+      for (const line of lines) {
+        if (pattern.test(line)) {
+          const matches = line.match(/(?:[€$£]\s*)?-?\(?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\)?/g);
+          if (matches && matches.length > 0) {
+            return parseNum(matches[matches.length - 1]);
+          }
+        }
+      }
+    }
+    return 0;
+  };
+
+  const total_amount_due = findAmount([/Total\s+(?:Amount\s+)?Due/i, /Total\s+Call/i, /Net\s+Amount\s+Due/i, /Total\s+Payment/i]);
+  const principal_call = findAmount([/Principal\s+(?:Drawdown|Call|Amount)/i, /Investment\s+Drawdown/i, /Capital\s+Call\s+Amount/i]);
+  const management_fee = findAmount([/Management\s+Fee/i, /Mgmt\s+Fee/i, /Advisory\s+Fee/i]);
+  const expenses = findAmount([/Partnership\s+Expenses/i, /Operating\s+Expenses/i, /Expenses/i]);
+  const total_commitment = findAmount([/Total\s+Commitment/i, /Capital\s+Commitment/i]);
+  const prior_contributed = findAmount([/Prior\s+Contributed/i, /Previously\s+Funded/i, /Cumulative\s+Drawn/i]);
+  const remaining_uncalled = findAmount([/Remaining\s+Uncalled/i, /Unfunded\s+Commitment/i]);
+
+  return {
+    gp_name: `${fund_name} GP S.à r.l.`,
+    fund_name,
+    lp_name: 'Institutional Mandate Partner',
+    notice_date: new Date().toISOString().split('T')[0],
+    due_date: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+    currency,
+    total_amount_due: total_amount_due || (principal_call + management_fee + expenses),
+    principal_call: principal_call || total_amount_due,
+    management_fee,
+    expenses,
+    equalization_interest: 0,
+    recallable_capital: 0,
+    fee_offsets: 0,
+    total_commitment,
+    prior_contributed,
+    remaining_uncalled: remaining_uncalled || (total_commitment > 0 ? total_commitment - prior_contributed - principal_call : 0),
+    beneficiary_name: fund_name,
+    bank_name: bank_name || (iban ? 'Beneficiary Custodian' : ''),
+    iban,
+    swift_bic,
+    account_number: iban,
+    payment_reference: `CALL-${new Date().getFullYear()}`,
+  };
 }
 
 startServer();
